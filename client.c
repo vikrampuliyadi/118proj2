@@ -7,11 +7,11 @@
 
 #include "utils.h"
 
-#define INITIAL_WINDOW_SIZE 1
+#define INITIAL_WINDOW_SIZE 5
 #define MAX_WINDOW_SIZE 10
 #define TIMEOUT 5                   // Example timeout value in seconds
 #define DUPLICATE_ACK_THRESHOLD 3   // Example threshold for duplicate ACKs
-#define PACKET_SEND_DELAY_US 100000 // Example delay between sending each packet in microseconds
+#define PACKET_SEND_DELAY_US 10000 // Example delay between sending each packet in microseconds
 
 int main(int argc, char *argv[])
 {
@@ -89,14 +89,14 @@ int main(int argc, char *argv[])
     ssize_t bytes_read;
     int all_window_acks_recv;
 
-    struct packet *packets = malloc(MAX_WINDOW_SIZE * sizeof(struct packet)); // Assume we can buffer up to MAX_WINDOW_SIZE packets
+    long *packets = malloc(MAX_WINDOW_SIZE * sizeof(long)); // stores fp positions to resend
 
     while (!feof(fp) || base < nextseqnum)
     {
         // Send packets up to the current window size
-        while (nextseqnum < base + 10 && !feof(fp))
+        while (nextseqnum < base + window_size && !feof(fp))
         {
-            printf("Next packet to be sent: %d, window: [%d, %d]\n", nextseqnum, base, base + window_size);
+            packets[nextseqnum % MAX_WINDOW_SIZE] = ftell(fp); // Remember the current file position
             // Construct and send packet with sequence number nextseqnum
             build_packet(&pkt, nextseqnum, 0, feof(fp) ? 1 : 0, 0, fread(buffer, 1, PAYLOAD_SIZE, fp), buffer);
             sendto(send_sockfd, &pkt, sizeof(struct packet), 0, (struct sockaddr *)&server_addr_to, sizeof(struct sockaddr_in));
@@ -108,7 +108,7 @@ int main(int argc, char *argv[])
         }
 
         // Set timeout for receiving ACKs
-        tv.tv_sec = TIMEOUT;
+        tv.tv_sec = 1;
         tv.tv_usec = 0;
         setsockopt(listen_sockfd, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof(tv));
         all_window_acks_recv = 1;
@@ -160,7 +160,7 @@ int main(int argc, char *argv[])
                     }
                     else {
                         // Multiplicative decrease on packet loss
-                        window_size /= 2;
+                        //window_size /= 2;
                     }
                 }
 
