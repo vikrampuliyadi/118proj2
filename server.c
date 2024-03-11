@@ -12,7 +12,7 @@ int main()
     struct sockaddr_in server_addr, client_addr_from, client_addr_to;
     struct packet buffer;
     socklen_t addr_size = sizeof(client_addr_from);
-    int expected_seq_num = 1;
+    int expected_seq_num = 0;
     int recv_len;
     struct packet ack_pkt;
 
@@ -89,11 +89,16 @@ int main()
             build_packet(&ack_pkt, 0, pkt.seqnum, 0, 1, 0, NULL); // Correctly initialize the ACK packet
             sendto(send_sockfd, &ack_pkt, sizeof(struct packet), 0, (struct sockaddr *)&client_addr_to, addr_size);
             printSend(&ack_pkt, 0); // Assuming printRecv function logs received packets
+        } 
+        else if (pkt.seqnum < expected_seq_num) {
+            build_packet(&ack_pkt, 0, pkt.seqnum, 0, 1, 0, NULL);
+            sendto(send_sockfd, &ack_pkt, sizeof(struct packet), 0, (struct sockaddr *)&client_addr_to, addr_size);
+            printSend(&ack_pkt, 0); // Assuming printRecv function logs received packets
         }
         else
         {
             
-            printf("not equal: current:, %d , expected: %d \n", pkt.seqnum, expected_seq_num);
+            // printf("not equal: current:, %d , expected: %d \n", pkt.seqnum, expected_seq_num);
             // If a duplicate packet is received, resend the ACK for the last correctly received packet
             build_packet(&ack_pkt, 0, expected_seq_num - 1, 0, 1, 0, NULL);
             sendto(send_sockfd, &ack_pkt, sizeof(struct packet), 0, (struct sockaddr *)&client_addr_to, addr_size);
@@ -101,10 +106,10 @@ int main()
         }
 
         // Break the loop and finish execution when the last packet is received
-        // if (pkt.last)
-        // {
-        //     break;
-        // }
+        if (pkt.last)
+        {
+            break;
+        }
     }
 
     fclose(fp);
