@@ -12,7 +12,7 @@ int main()
     struct sockaddr_in server_addr, client_addr_from, client_addr_to;
     struct packet buffer;
     socklen_t addr_size = sizeof(client_addr_from);
-    int expected_seq_num = 0;
+    int expected_seq_num = 1;
     int recv_len;
     struct packet ack_pkt;
 
@@ -65,6 +65,7 @@ int main()
         close(send_sockfd);
         return 1;
     }
+
     while (1)
     {
         struct packet pkt, ack_pkt;
@@ -78,24 +79,36 @@ int main()
         // Check if the received packet is the expected sequence number
         if (pkt.seqnum == expected_seq_num)
         {
+            printf("current:, %d , expected: %d \n", pkt.seqnum, expected_seq_num);
+
             // Write payload to file
             fwrite(pkt.payload, 1, pkt.length, fp);
             expected_seq_num++;
-        }
 
-        // Send ACK for received packet
-        build_packet(&ack_pkt, 0, pkt.seqnum, 0, 1, 0, NULL); // Correctly initialize the ACK packet
-        sendto(listen_sockfd, &ack_pkt, sizeof(struct packet), 0, (struct sockaddr *)&client_addr_to, addr_size);
-        printRecv(&pkt); // Assuming printRecv function logs received packets
-        printSend(&ack_pkt, 0);
+            // Send ACK for received packet
+            build_packet(&ack_pkt, 0, pkt.seqnum, 0, 1, 0, NULL); // Correctly initialize the ACK packet
+            sendto(send_sockfd, &ack_pkt, sizeof(struct packet), 0, (struct sockaddr *)&client_addr_to, addr_size);
+            printSend(&ack_pkt, 0); // Assuming printRecv function logs received packets
+        }
+        else
+        {
+            
+            printf("not equal: current:, %d , expected: %d \n", pkt.seqnum, expected_seq_num);
+            // If a duplicate packet is received, resend the ACK for the last correctly received packet
+            build_packet(&ack_pkt, 0, expected_seq_num - 1, 0, 1, 0, NULL);
+            sendto(send_sockfd, &ack_pkt, sizeof(struct packet), 0, (struct sockaddr *)&client_addr_to, addr_size);
+            printSend(&ack_pkt, 0); // Assuming printRecv function logs received packets
+        }
 
         // Break the loop and finish execution when the last packet is received
-        if (pkt.last)
-        {
-            break;
-        }
+        // if (pkt.last)
+        // {
+        //     break;
+        // }
     }
+
     fclose(fp);
     close(listen_sockfd);
+    close(send_sockfd);
     return 0;
 }
