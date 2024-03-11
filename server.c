@@ -106,10 +106,10 @@ int main()
         }
 
         // Break the loop and finish execution when the last packet is received
-        // if (pkt.last)
-        // {
-        //     break;
-        // }
+        if (pkt.last)
+        {
+            break;
+        }
     }
 
     fclose(fp);

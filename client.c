@@ -9,7 +9,6 @@
 
 #define INITIAL_WINDOW_SIZE 5
 #define MAX_WINDOW_SIZE 10
-#define TIMEOUT 5                   // Example timeout value in seconds
 #define DUPLICATE_ACK_THRESHOLD 3   // Example threshold for duplicate ACKs
 #define PACKET_SEND_DELAY_US 10000 // Example delay between sending each packet in microseconds
 
@@ -91,7 +90,8 @@ int main(int argc, char *argv[])
 
     long *packets = malloc(MAX_WINDOW_SIZE * sizeof(long)); // stores fp positions to resend
 
-    while (!feof(fp) || base < nextseqnum)
+    //while (!feof(fp) || base < nextseqnum)
+    while (1)
     {
         // Send packets up to the current window size
         while (nextseqnum < base + window_size && !feof(fp))
@@ -105,6 +105,14 @@ int main(int argc, char *argv[])
 
             // Introduce delay between sending packets
             usleep(PACKET_SEND_DELAY_US);
+        }
+        
+        if (feof(fp) && base == nextseqnum) {
+            // manually send last packet (perhaps optimize this)
+            pkt.last = 1;
+            sendto(send_sockfd, &pkt, sizeof(struct packet), 0, (struct sockaddr *)&server_addr_to, sizeof(struct sockaddr_in));
+            printSend(&pkt, 0);
+            break;
         }
 
         // Set timeout for receiving ACKs
@@ -123,11 +131,12 @@ int main(int argc, char *argv[])
                 // Resend packets from base to nextseqnum
                 for (int i = base; i < nextseqnum; i++) {
                     all_window_acks_recv = 0;
-                    build_packet(&pkt, i, 0, i == nextseqnum - 1 ? 1 : 0, 0, fread(buffer, 1, PAYLOAD_SIZE, fp), buffer);
+                    fseek(fp, packets[i % MAX_WINDOW_SIZE], SEEK_SET); // Reset file pointer to the correct position
+                    build_packet(&pkt, i, 0, feof(fp) ? 1 : 0, 0, fread(buffer, 1, PAYLOAD_SIZE, fp), buffer);
                     sendto(send_sockfd, &pkt, sizeof(struct packet), 0, (struct sockaddr *)&server_addr_to, sizeof(struct sockaddr_in));
                     printSend(&pkt, 1); // Indicate resend
                 }
-                if (all_window_acks_recv) {
+                if (all_window_acks_recv && window_size < MAX_WINDOW_SIZE) {
                     window_size++;
                     printf("new window size: %d\n", window_size);
                 }
@@ -150,18 +159,6 @@ int main(int argc, char *argv[])
                         duplicate_acks = 0;
                     }
                     //continue; // ignore duplicate acks
-                }
-
-                // Adjust window size using AIMD rules
-                if (window_size < MAX_WINDOW_SIZE) {
-                    if (ack_pkt.ack == 1) {
-                        // Additive increase on receiving ACKs
-                        //window_size++;
-                    }
-                    else {
-                        // Multiplicative decrease on packet loss
-                        //window_size /= 2;
-                    }
                 }
 
                 // Log received ACK
