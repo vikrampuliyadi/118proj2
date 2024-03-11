@@ -64,8 +64,7 @@ int main(int argc, char *argv[])
     client_addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
     // Bind the listen socket to the client address
-    if (bind(listen_sockfd, (struct sockaddr *)&client_addr, sizeof(client_addr)) < 0)
-    {
+    if (bind(listen_sockfd, (struct sockaddr *)&client_addr, sizeof(client_addr)) < 0) {
         perror("Bind failed");
         close(listen_sockfd);
         return 1;
@@ -73,8 +72,7 @@ int main(int argc, char *argv[])
 
     // Open file for reading
     FILE *fp = fopen(filename, "rb");
-    if (fp == NULL)
-    {
+    if (fp == NULL) {
         perror("Error opening file");
         close(listen_sockfd);
         close(send_sockfd);
@@ -88,12 +86,17 @@ int main(int argc, char *argv[])
     int expected_ack = 0;
     int duplicate_acks = 0;
     int recv_len;
+    ssize_t bytes_read;
+    int all_window_acks_recv;
+
+    struct packet *packets = malloc(MAX_WINDOW_SIZE * sizeof(struct packet)); // Assume we can buffer up to MAX_WINDOW_SIZE packets
 
     while (!feof(fp) || base < nextseqnum)
     {
         // Send packets up to the current window size
-        while (nextseqnum < base + window_size && !feof(fp))
+        while (nextseqnum < base + 10 && !feof(fp))
         {
+            printf("Next packet to be sent: %d, window: [%d, %d]\n", nextseqnum, base, base + window_size);
             // Construct and send packet with sequence number nextseqnum
             build_packet(&pkt, nextseqnum, 0, feof(fp) ? 1 : 0, 0, fread(buffer, 1, PAYLOAD_SIZE, fp), buffer);
             sendto(send_sockfd, &pkt, sizeof(struct packet), 0, (struct sockaddr *)&server_addr_to, sizeof(struct sockaddr_in));
@@ -108,57 +111,54 @@ int main(int argc, char *argv[])
         tv.tv_sec = TIMEOUT;
         tv.tv_usec = 0;
         setsockopt(listen_sockfd, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof(tv));
+        all_window_acks_recv = 1;
 
         // Wait for ACKs and handle them
-        while (1)
-        {
+        while (1) {
             // Receive ACKs
             recv_len = recvfrom(listen_sockfd, &ack_pkt, sizeof(struct packet), 0, NULL, NULL);
 
-            if (recv_len < 0)
-            {
+            if (recv_len < 0) {
                 // Handle timeout
                 // Resend packets from base to nextseqnum
-                for (int i = base; i < nextseqnum; i++)
-                {
+                for (int i = base; i < nextseqnum; i++) {
+                    all_window_acks_recv = 0;
                     build_packet(&pkt, i, 0, i == nextseqnum - 1 ? 1 : 0, 0, fread(buffer, 1, PAYLOAD_SIZE, fp), buffer);
                     sendto(send_sockfd, &pkt, sizeof(struct packet), 0, (struct sockaddr *)&server_addr_to, sizeof(struct sockaddr_in));
                     printSend(&pkt, 1); // Indicate resend
                 }
+                if (all_window_acks_recv) {
+                    window_size++;
+                    printf("new window size: %d\n", window_size);
+                }
                 break;
             }
-            else
-            {
+            else {
                 // Check if received ACK is in order
-                if (ack_pkt.acknum == expected_ack)
-                {
+                if (ack_pkt.acknum == expected_ack) {
                     // Increment expected_ack and slide window forward
                     expected_ack++;
                     base++;
                     duplicate_acks = 0;
                 }
-                else
-                {
+                else {
                     // Handle duplicate ACKs
                     duplicate_acks++;
-                    if (duplicate_acks >= DUPLICATE_ACK_THRESHOLD)
-                    {
+                    if (duplicate_acks >= DUPLICATE_ACK_THRESHOLD) {
                         // Decrease window size on receiving duplicate ACKs
                         window_size /= 2;
                         duplicate_acks = 0;
                     }
+                    //continue; // ignore duplicate acks
                 }
 
                 // Adjust window size using AIMD rules
-                if (window_size < MAX_WINDOW_SIZE)
-                {
-                    if (ack_pkt.ack == 1)
-                    {
+                if (window_size < MAX_WINDOW_SIZE) {
+                    if (ack_pkt.ack == 1) {
                         // Additive increase on receiving ACKs
-                        window_size++;
+                        //window_size++;
                     }
-                    else
-                    {
+                    else {
                         // Multiplicative decrease on packet loss
                         window_size /= 2;
                     }
@@ -170,8 +170,10 @@ int main(int argc, char *argv[])
         }
     }
 
+    free(packets);
     fclose(fp);
     close(listen_sockfd);
     close(send_sockfd);
     return 0;
 }
+
