@@ -3,9 +3,15 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <time.h>
+#include <sys/time.h> // Include for gettimeofday function
 
 #include "utils.h"
+
+#define INITIAL_WINDOW_SIZE 1
+#define MAX_WINDOW_SIZE 10
+#define TIMEOUT 5                   // Example timeout value in seconds
+#define DUPLICATE_ACK_THRESHOLD 3   // Example threshold for duplicate ACKs
+#define PACKET_SEND_DELAY_US 100000 // Example delay between sending each packet in microseconds
 
 int main(int argc, char *argv[])
 {
@@ -75,53 +81,92 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    // TODO: Read from file, and initiate reliable data transfer to the server
-    size_t read_bytes;
-    int window_base = 0;
-    int window_end = WINDOW_SIZE - 1;
-    fd_set read_fds;
-    int ack_received = 0;
+    // Initialize variables for AIMD scheme
+    int window_size = INITIAL_WINDOW_SIZE;
+    int base = 0;
+    int nextseqnum = 0;
+    int expected_ack = 0;
+    int duplicate_acks = 0;
+    int recv_len;
 
-    while (!feof(fp) || window_base <= seq_num)
+    while (!feof(fp) || base < nextseqnum)
     {
-        while (seq_num <= window_end && (read_bytes = fread(buffer, 1, PAYLOAD_SIZE, fp)) > 0)
+        // Send packets up to the current window size
+        while (nextseqnum < base + window_size && !feof(fp))
         {
-            build_packet(&pkt, seq_num, 0, feof(fp) ? 1 : 0, 0, read_bytes, buffer);
+            // Construct and send packet with sequence number nextseqnum
+            build_packet(&pkt, nextseqnum, 0, feof(fp) ? 1 : 0, 0, fread(buffer, 1, PAYLOAD_SIZE, fp), buffer);
             sendto(send_sockfd, &pkt, sizeof(struct packet), 0, (struct sockaddr *)&server_addr_to, sizeof(struct sockaddr_in));
             printSend(&pkt, 0);
-            seq_num++;
+            nextseqnum++;
+
+            // Introduce delay between sending packets
+            usleep(PACKET_SEND_DELAY_US);
         }
 
-        int expected_ack = window_base; // Initialize expected_ack to the base of the window
-
-        // Wait for ACK
-        FD_ZERO(&read_fds);
-        FD_SET(send_sockfd, &read_fds);
+        // Set timeout for receiving ACKs
         tv.tv_sec = TIMEOUT;
         tv.tv_usec = 0;
+        setsockopt(listen_sockfd, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof(tv));
 
-        if (select(send_sockfd + 1, &read_fds, NULL, NULL, &tv) > 0)
+        // Wait for ACKs and handle them
+        while (1)
         {
-            recvfrom(send_sockfd, &pkt, sizeof(struct packet), 0, NULL, NULL);
-            printRecv(&pkt);
+            // Receive ACKs
+            recv_len = recvfrom(listen_sockfd, &ack_pkt, sizeof(struct packet), 0, NULL, NULL);
 
-            // Check if received ACK is within the window
-            if (pkt.ack == 1 && pkt.acknum >= window_base && pkt.acknum <= window_end)
+            if (recv_len < 0)
             {
-                if (pkt.acknum >= expected_ack)
+                // Handle timeout
+                // Resend packets from base to nextseqnum
+                for (int i = base; i < nextseqnum; i++)
                 {
-                    // Update window base to the next expected sequence number
-                    window_base = pkt.acknum + 1;
-                    window_end = window_base + WINDOW_SIZE - 1;
-                    expected_ack = window_base; // Update expected_ack to the new base
+                    build_packet(&pkt, i, 0, i == nextseqnum - 1 ? 1 : 0, 0, fread(buffer, 1, PAYLOAD_SIZE, fp), buffer);
+                    sendto(send_sockfd, &pkt, sizeof(struct packet), 0, (struct sockaddr *)&server_addr_to, sizeof(struct sockaddr_in));
+                    printSend(&pkt, 1); // Indicate resend
                 }
+                break;
             }
-        }
-        else if (!ack_received)
-        {
-            // Timeout, resend window
-            fseek(fp, window_base * PAYLOAD_SIZE, SEEK_SET);
-            seq_num = window_base;
+            else
+            {
+                // Check if received ACK is in order
+                if (ack_pkt.acknum == expected_ack)
+                {
+                    // Increment expected_ack and slide window forward
+                    expected_ack++;
+                    base++;
+                    duplicate_acks = 0;
+                }
+                else
+                {
+                    // Handle duplicate ACKs
+                    duplicate_acks++;
+                    if (duplicate_acks >= DUPLICATE_ACK_THRESHOLD)
+                    {
+                        // Decrease window size on receiving duplicate ACKs
+                        window_size /= 2;
+                        duplicate_acks = 0;
+                    }
+                }
+
+                // Adjust window size using AIMD rules
+                if (window_size < MAX_WINDOW_SIZE)
+                {
+                    if (ack_pkt.ack == 1)
+                    {
+                        // Additive increase on receiving ACKs
+                        window_size++;
+                    }
+                    else
+                    {
+                        // Multiplicative decrease on packet loss
+                        window_size /= 2;
+                    }
+                }
+
+                // Log received ACK
+                printf("Received ACK: %d\n", ack_pkt.acknum);
+            }
         }
     }
 
