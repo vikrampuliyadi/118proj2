@@ -11,7 +11,7 @@
 #define MAX_WINDOW_SIZE 10
 #define DUPLICATE_ACK_THRESHOLD 3   
 #define PACKET_SEND_DELAY_US 1000 
-#define ADDITIVE_INCREASE_FACTOR 2 // Adjust as needed
+#define ADDITIVE_INCREASE_FACTOR 2 
 
 int main(int argc, char *argv[])
 {
