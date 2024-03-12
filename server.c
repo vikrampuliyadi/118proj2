@@ -6,6 +6,8 @@
 
 #include "utils.h"
 
+#define MAX_WINDOW_SIZE 10
+
 int main()
 {
     int listen_sockfd, send_sockfd;
@@ -15,6 +17,9 @@ int main()
     int expected_seq_num = 0;
     int recv_len;
     struct packet ack_pkt;
+    int received[MAX_WINDOW_SIZE] = {0};
+    struct packet packetsBuffer[MAX_WINDOW_SIZE]; // Buffer for out-of-order packets
+
 
     // Create a UDP socket for sending
     send_sockfd = socket(AF_INET, SOCK_DGRAM, 0);
@@ -66,47 +71,48 @@ int main()
         return 1;
     }
 
+    int all_recv;
     while (1)
     {
         struct packet pkt, ack_pkt;
+        all_recv = 1;
         // Receive packets
         if (recvfrom(listen_sockfd, &pkt, sizeof(struct packet), 0, (struct sockaddr *)&client_addr_from, &addr_size) < 0)
         {
             perror("Error receiving packet");
-            continue; // Or break, depending on how you want to handle receive errors
+            continue;
         }
+        printRecv(&pkt);
 
-        // Check if the received packet is the expected sequence number
-        if (pkt.seqnum == expected_seq_num)
-        {
-            printf("current:, %d , expected: %d \n", pkt.seqnum, expected_seq_num);
+        // Send ACK regardless of expected packet num
+        build_packet(&ack_pkt, 0, pkt.seqnum, 0, 1, 0, NULL); // Correctly initialize the ACK packet
+        sendto(send_sockfd, &ack_pkt, sizeof(struct packet), 0, (struct sockaddr *)&client_addr_to, addr_size);
+        printSend(&ack_pkt, 0); // Assuming printRecv function logs received packets
 
-            // Write payload to file
-            fwrite(pkt.payload, 1, pkt.length, fp);
-            expected_seq_num++;
+        if (received[pkt.seqnum % MAX_WINDOW_SIZE] == 0 && (pkt.seqnum >= expected_seq_num && pkt.seqnum < expected_seq_num + MAX_WINDOW_SIZE)) {
+            received[pkt.seqnum % MAX_WINDOW_SIZE] = 1;
+            packetsBuffer[pkt.seqnum % MAX_WINDOW_SIZE] = pkt;
 
-            // Send ACK for received packet
-            build_packet(&ack_pkt, 0, pkt.seqnum, 0, 1, 0, NULL); // Correctly initialize the ACK packet
-            sendto(send_sockfd, &ack_pkt, sizeof(struct packet), 0, (struct sockaddr *)&client_addr_to, addr_size);
-            printSend(&ack_pkt, 0); // Assuming printRecv function logs received packets
-        } 
-        else if (pkt.seqnum < expected_seq_num) {
-            build_packet(&ack_pkt, 0, pkt.seqnum, 0, 1, 0, NULL);
-            sendto(send_sockfd, &ack_pkt, sizeof(struct packet), 0, (struct sockaddr *)&client_addr_to, addr_size);
-            printSend(&ack_pkt, 0); // Assuming printRecv function logs received packets
-        }
-        else
-        {
-            
-            printf("not equal: current:, %d , expected: %d \n", pkt.seqnum, expected_seq_num);
-            // If a duplicate packet is received, resend the ACK for the last correctly received packet
-            build_packet(&ack_pkt, 0, expected_seq_num - 1, 0, 1, 0, NULL);
-            sendto(send_sockfd, &ack_pkt, sizeof(struct packet), 0, (struct sockaddr *)&client_addr_to, addr_size);
-            printSend(&ack_pkt, 0); // Assuming printRecv function logs received packets
+            while (received[expected_seq_num % MAX_WINDOW_SIZE] == 1) {
+                // Write payload to file and advance next_expected_seq
+                printf("First %d bytes of the array: ", 10);
+                for (int i = 0; i < 10; i++) {
+                    printf("%d ", packetsBuffer[expected_seq_num % MAX_WINDOW_SIZE].payload[i]);
+                }
+                printf("\n");
+                fwrite(packetsBuffer[expected_seq_num % MAX_WINDOW_SIZE].payload, 1, packetsBuffer[expected_seq_num % MAX_WINDOW_SIZE].length, fp);
+                received[expected_seq_num % MAX_WINDOW_SIZE] = 0; // Mark as written
+                expected_seq_num++; // Assume sequence numbers wrap around
+            }
         }
 
         // Break the loop and finish execution when the last packet is received
-        if (pkt.last)
+        for (int i = 0; i < MAX_WINDOW_SIZE; i++) {
+            if (received[i] != 0) {
+                all_recv = 0;
+            }
+        }
+        if (pkt.last && all_recv)
         {
             break;
         }

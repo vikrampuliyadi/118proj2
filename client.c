@@ -87,18 +87,20 @@ int main(int argc, char *argv[])
     int recv_len;
     ssize_t bytes_read;
     int all_window_acks_recv;
-
-    long *packets = malloc(MAX_WINDOW_SIZE * sizeof(long)); // stores fp positions to resend
-
-    //while (!feof(fp) || base < nextseqnum)
+    char acks[MAX_WINDOW_SIZE] = {0}; // Track acks for each packet in the window
+    long *file_positions = malloc(MAX_WINDOW_SIZE * sizeof(long)); // stores fp positions to resend
+    int smallest_unacked = 0;
+    int attempts = 0;
     while (1)
     {
         // Send packets up to the current window size
+        // only send packets that haven't received acks yet
         while (nextseqnum < base + window_size && !feof(fp))
         {
-            packets[nextseqnum % MAX_WINDOW_SIZE] = ftell(fp); // Remember the current file position
+            file_positions[nextseqnum % MAX_WINDOW_SIZE] = ftell(fp); // Remember the current file position
             // Construct and send packet with sequence number nextseqnum
-            build_packet(&pkt, nextseqnum, 0, feof(fp) ? 1 : 0, 0, fread(buffer, 1, PAYLOAD_SIZE, fp), buffer);
+            bytes_read = fread(buffer, 1, PAYLOAD_SIZE, fp);
+            build_packet(&pkt, nextseqnum, 0, feof(fp) ? 1 : 0, 0, bytes_read, buffer);
             sendto(send_sockfd, &pkt, sizeof(struct packet), 0, (struct sockaddr *)&server_addr_to, sizeof(struct sockaddr_in));
             printSend(&pkt, 0);
             nextseqnum++;
@@ -106,14 +108,12 @@ int main(int argc, char *argv[])
             // Introduce delay between sending packets
             usleep(PACKET_SEND_DELAY_US);
         }
-        
-        if (feof(fp) && base == nextseqnum) {
-            // manually send last packet (perhaps optimize this)
-            pkt.last = 1;
-            sendto(send_sockfd, &pkt, sizeof(struct packet), 0, (struct sockaddr *)&server_addr_to, sizeof(struct sockaddr_in));
-            printSend(&pkt, 0);
+
+
+        if ((feof(fp) && base == nextseqnum) || attempts > MAX_WINDOW_SIZE) {
             break;
         }
+    
 
         // Set timeout for receiving ACKs
         tv.tv_sec = 1;
@@ -128,46 +128,43 @@ int main(int argc, char *argv[])
 
             if (recv_len < 0) {
                 // Handle timeout
-                // Resend packets from base to nextseqnum
+                // Resend the packet that timed out and any unacked packets in the window
                 for (int i = base; i < nextseqnum; i++) {
-                    all_window_acks_recv = 0;
-                    fseek(fp, packets[i % MAX_WINDOW_SIZE], SEEK_SET); // Reset file pointer to the correct position
-                    build_packet(&pkt, i, 0, feof(fp) ? 1 : 0, 0, fread(buffer, 1, PAYLOAD_SIZE, fp), buffer);
+                    if (acks[i % MAX_WINDOW_SIZE] > 0) {
+                        bytes_read = fread(buffer, 1, PAYLOAD_SIZE, fp);
+                        continue; //don't resend packets that were acked
+                    }
+                    fseek(fp, file_positions[i % MAX_WINDOW_SIZE], SEEK_SET); // Reset file pointer to the correct position
+                    bytes_read = fread(buffer, 1, PAYLOAD_SIZE, fp);
+                    build_packet(&pkt, i, 0, feof(fp) ? 1 : 0, 0, bytes_read, buffer);
                     sendto(send_sockfd, &pkt, sizeof(struct packet), 0, (struct sockaddr *)&server_addr_to, sizeof(struct sockaddr_in));
                     printSend(&pkt, 1); // Indicate resend
-                }
-                if (all_window_acks_recv && window_size < MAX_WINDOW_SIZE) {
-                    window_size++;
-                    printf("new window size: %d\n", window_size);
+                    attempts++;
                 }
                 break;
             }
             else {
-                // Check if received ACK is in order
-                if (ack_pkt.acknum == expected_ack) {
-                    // Increment expected_ack and slide window forward
-                    expected_ack++;
-                    base++;
-                    duplicate_acks = 0;
-                }
-                else {
-                    // Handle duplicate ACKs
-                    duplicate_acks++;
-                    if (duplicate_acks >= DUPLICATE_ACK_THRESHOLD) {
-                        // Decrease window size on receiving duplicate ACKs
-                        window_size /= 2;
-                        duplicate_acks = 0;
+                // set ack received
+                acks[ack_pkt.acknum % MAX_WINDOW_SIZE] = 1;
+                for (int i = smallest_unacked; i < smallest_unacked + window_size; i++) {                    
+                    if (acks[i % MAX_WINDOW_SIZE] == 0) {
+                        smallest_unacked = i;
+                        break;
                     }
-                    //continue; // ignore duplicate acks
+                    acks[i % MAX_WINDOW_SIZE] = 0;
                 }
+                base = smallest_unacked;
+                attempts = 0;
 
                 // Log received ACK
                 printf("Received ACK: %d\n", ack_pkt.acknum);
             }
         }
+
+
     }
 
-    free(packets);
+    free(file_positions);
     fclose(fp);
     close(listen_sockfd);
     close(send_sockfd);
