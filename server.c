@@ -6,7 +6,7 @@
 
 #include "utils.h"
 
-#define MAX_WINDOW_SIZE 20
+#define MAX_WINDOW_SIZE 15
 
 int main()
 {
@@ -19,7 +19,7 @@ int main()
     struct packet ack_pkt;
     int received[MAX_WINDOW_SIZE] = {0};
     struct packet packetsBuffer[MAX_WINDOW_SIZE]; // Buffer for out-of-order packets
-
+    int last_recvd = 0;
 
     // Create a UDP socket for sending
     send_sockfd = socket(AF_INET, SOCK_DGRAM, 0);
@@ -91,15 +91,13 @@ int main()
 
         if (received[pkt.seqnum % MAX_WINDOW_SIZE] == 0 && (pkt.seqnum >= expected_seq_num && pkt.seqnum < expected_seq_num + MAX_WINDOW_SIZE)) {
             received[pkt.seqnum % MAX_WINDOW_SIZE] = 1;
+            if (pkt.last) {
+                last_recvd = 1;
+            }
             packetsBuffer[pkt.seqnum % MAX_WINDOW_SIZE] = pkt;
 
             while (received[expected_seq_num % MAX_WINDOW_SIZE] == 1) {
                 // Write payload to file and advance next_expected_seq
-                printf("First %d bytes of the array: ", 10);
-                for (int i = 0; i < 10; i++) {
-                    printf("%d ", packetsBuffer[expected_seq_num % MAX_WINDOW_SIZE].payload[i]);
-                }
-                printf("\n");
                 fwrite(packetsBuffer[expected_seq_num % MAX_WINDOW_SIZE].payload, 1, packetsBuffer[expected_seq_num % MAX_WINDOW_SIZE].length, fp);
                 received[expected_seq_num % MAX_WINDOW_SIZE] = 0; // Mark as written
                 expected_seq_num++; // Assume sequence numbers wrap around
@@ -107,12 +105,13 @@ int main()
         }
 
         // Break the loop and finish execution when the last packet is received
+
         for (int i = 0; i < MAX_WINDOW_SIZE; i++) {
             if (received[i] != 0) {
                 all_recv = 0;
             }
         }
-        if (pkt.last && all_recv)
+        if (last_recvd && all_recv)
         {
             break;
         }

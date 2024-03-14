@@ -7,8 +7,8 @@
 
 #include "utils.h"
 
-#define INITIAL_WINDOW_SIZE 1
-#define MAX_WINDOW_SIZE 10
+#define INITIAL_WINDOW_SIZE 5
+#define MAX_WINDOW_SIZE 15
 #define DUPLICATE_ACK_THRESHOLD 3   // Example threshold for duplicate ACKs
 #define PACKET_SEND_DELAY_US 10000 // Example delay between sending each packet in microseconds
 
