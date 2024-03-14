@@ -7,7 +7,7 @@
 
 #include "utils.h"
 
-#define INITIAL_WINDOW_SIZE 5
+#define INITIAL_WINDOW_SIZE 1
 #define MAX_WINDOW_SIZE 10
 #define DUPLICATE_ACK_THRESHOLD 3   // Example threshold for duplicate ACKs
 #define PACKET_SEND_DELAY_US 10000 // Example delay between sending each packet in microseconds
@@ -79,7 +79,7 @@ int main(int argc, char *argv[])
     }
 
     // Initialize variables for AIMD scheme
-    int window_size = INITIAL_WINDOW_SIZE;
+    int window_size = MAX_WINDOW_SIZE;
     int base = 0;
     int nextseqnum = 0;
     int expected_ack = 0;
@@ -116,8 +116,8 @@ int main(int argc, char *argv[])
     
 
         // Set timeout for receiving ACKs
-        tv.tv_sec = 1;
-        tv.tv_usec = 0;
+        tv.tv_sec = 0;
+        tv.tv_usec = 300000;
         setsockopt(listen_sockfd, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof(tv));
         all_window_acks_recv = 1;
 

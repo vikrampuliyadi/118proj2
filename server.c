@@ -6,7 +6,7 @@
 
 #include "utils.h"
 
-#define MAX_WINDOW_SIZE 10
+#define MAX_WINDOW_SIZE 20
 
 int main()
 {
