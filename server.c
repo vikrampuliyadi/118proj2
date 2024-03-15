@@ -6,7 +6,7 @@
 
 #include "utils.h"
 
-#define MAX_WINDOW_SIZE 15
+#define MAX_WINDOW_SIZE 100
 
 int main()
 {
@@ -85,9 +85,9 @@ int main()
         printRecv(&pkt);
 
         // Send ACK regardless of expected packet num
-        build_packet(&ack_pkt, 0, pkt.seqnum, 0, 1, 0, NULL); // Correctly initialize the ACK packet
+        build_packet(&ack_pkt, 0, pkt.seqnum, 0, 1, 0, NULL); 
         sendto(send_sockfd, &ack_pkt, sizeof(struct packet), 0, (struct sockaddr *)&client_addr_to, addr_size);
-        printSend(&ack_pkt, 0); // Assuming printRecv function logs received packets
+        printSend(&ack_pkt, 0); 
 
         if (received[pkt.seqnum % MAX_WINDOW_SIZE] == 0 && (pkt.seqnum >= expected_seq_num && pkt.seqnum < expected_seq_num + MAX_WINDOW_SIZE)) {
             received[pkt.seqnum % MAX_WINDOW_SIZE] = 1;
@@ -99,13 +99,12 @@ int main()
             while (received[expected_seq_num % MAX_WINDOW_SIZE] == 1) {
                 // Write payload to file and advance next_expected_seq
                 fwrite(packetsBuffer[expected_seq_num % MAX_WINDOW_SIZE].payload, 1, packetsBuffer[expected_seq_num % MAX_WINDOW_SIZE].length, fp);
-                received[expected_seq_num % MAX_WINDOW_SIZE] = 0; // Mark as written
-                expected_seq_num++; // Assume sequence numbers wrap around
+                received[expected_seq_num % MAX_WINDOW_SIZE] = 0; 
+                expected_seq_num++; 
             }
         }
 
-        // Break the loop and finish execution when the last packet is received
-
+        // Break the loop and finish executionn when the last packet is received
         for (int i = 0; i < MAX_WINDOW_SIZE; i++) {
             if (received[i] != 0) {
                 all_recv = 0;
